@@ -1,0 +1,47 @@
+{
+  "name": "nep-pool",
+  "version": "1.0.0",
+  "description": "NEP pool consists of single asset and liquidity pair farms. Under single asset farming, you can deposit BNB, CAKE, and NEP whereas you can also deposit NEP-BUSD, NEP-BNB, and NEP-USDT LP tokens from PancakeSwap.",
+  "main": "",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "truffle test",
+    "flatten": "truffle-flattener ./contracts/Pool.sol > ./contracts/.Pool.flat.sol",
+    "coverage": "truffle run coverage"
+  },
+  "standard": {
+    "env": [
+      "mocha"
+    ],
+    "global": [
+      "contract",
+      "artifacts",
+      "web3"
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/neptune-mutual/nep-pool.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "BUSL-1.1",
+  "bugs": {
+    "url": "https://github.com/neptune-mutual/nep-pool/issues"
+  },
+  "homepage": "https://github.com/neptune-mutual/nep-pool#readme",
+  "devDependencies": {
+    "bignumber.js": "^9.0.1",
+    "chai": "^4.3.4",
+    "chai-as-promised": "^7.1.1",
+    "chai-bignumber": "^3.0.0",
+    "openzeppelin-solidity": "^4.0.0",
+    "prettier": "^2.2.1",
+    "prettier-plugin-solidity": "*",
+    "solidity-coverage": "^0.7.16",
+    "standard": "^16.0.3",
+    "truffle-flattener": "^1.5.0"
+  }
+}
