@@ -5,10 +5,13 @@ import "openzeppelin-solidity/contracts/security/Pausable.sol";
 import "openzeppelin-solidity/contracts/security/ReentrancyGuard.sol";
 import "./Recoverable.sol";
 import "./INepPool.sol";
+import "./Libraries/NTransferUtilV1.sol";
 
 contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
   using SafeMath for uint256;
+  using NTransferUtilV1 for IERC20;
 
+  uint256 public override _totalRewardAllocation;
   address public _treasury;
   IERC20 public _nepToken;
   uint256 public _totalNepRewarded;
@@ -40,7 +43,8 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
     address you = super._msgSender();
 
     if (amount > 0) {
-      _nepToken.transferFrom(you, address(this), amount);
+      _totalRewardAllocation = _totalRewardAllocation.add(amount);
+      _nepToken.safeTransferFrom(you, address(this), amount);
     }
 
     _pool[token].name = name;
@@ -119,6 +123,20 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
     }
 
     return _pool[token].maxStake.sub(_pool[token].totalLocked);
+  }
+
+  /**
+   * @dev Returns the entry fee of the given token for the given amount
+   */
+  function getEntryFeeFor(address token, uint256 amount) external view override returns (uint256) {
+    return amount.mul(_pool[token].entryFee).div(1000000);
+  }
+
+  /**
+   * @dev Returns the exit fee of the given token for the given amount
+   */
+  function getExitFeeFor(address token, uint256 amount) external view override returns (uint256) {
+    return amount.mul(_pool[token].exitFee).div(1000000);
   }
 
   /**
@@ -228,7 +246,7 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
 
     _pool[token].totalNepRewarded = _pool[token].totalNepRewarded.add(rewards);
     _totalNepRewarded = _totalNepRewarded.add(rewards);
-    _nepToken.transfer(account, rewards);
+    _nepToken.safeTransfer(account, rewards);
 
     emit RewardsWithdrawn(token, account, rewards);
   }
@@ -254,19 +272,22 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
     require(this.getRemainingToStake(token) >= amount, "Sorry, that exceeds target");
 
     address you = super._msgSender();
-    IERC20(token).transferFrom(you, address(this), amount);
+    IERC20(token).safeTransferFrom(you, address(this), amount);
 
     // First transfer your pending rewards
     _withdrawRewards(token, you);
 
-    // Credit your ledger
-    _tokenBalances[token][you] = _tokenBalances[token][you].add(amount);
-    _tokenDeposits[token][you] = _tokenDeposits[token][you].add(amount);
+    uint256 entryFee = this.getEntryFeeFor(token, amount);
+    uint256 stake = amount.sub(entryFee);
 
-    // WHAT ABOUT ENTRY FEES?
-    _pool[token].totalLocked = _pool[token].totalLocked.add(amount);
+    // Credit your ledger
+    _tokenBalances[token][you] = _tokenBalances[token][you].add(stake);
+    _tokenDeposits[token][you] = _tokenDeposits[token][you].add(stake);
+
+    _pool[token].totalLocked = _pool[token].totalLocked.add(stake);
     _depositHeights[token][you] = block.number;
 
+    IERC20(token).safeTransfer(_treasury, entryFee);
     emit Deposit(token, you, amount);
   }
 
@@ -292,10 +313,12 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
     _tokenBalances[token][you] = _tokenBalances[token][you].sub(amount);
     _tokenWithdrawals[token][you] = _tokenWithdrawals[token][you].add(amount);
 
-    // WHAT ABOUT WITHDRAWAL FEES?
+    uint256 exitFee = this.getExitFeeFor(token, amount);
+    uint256 stake = amount.sub(exitFee);
 
-    // Transfer it back to you
-    IERC20(token).transfer(you, amount);
+    IERC20(token).safeTransfer(you, stake);
+    IERC20(token).safeTransfer(_treasury, exitFee);
+
     emit Withdrawn(token, you, amount);
   }
 

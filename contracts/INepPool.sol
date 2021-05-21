@@ -19,6 +19,11 @@ interface INepPool {
   event Withdrawn(address indexed token, address indexed account, uint256 amount);
 
   /**
+   * @dev Gets the total number of NEP allocated to be distributed as reward
+   */
+  function _totalRewardAllocation() external view returns (uint256);
+
+  /**
    * @dev Gets the number of blocks since last rewards
    * @param token Provide the token address to get the blocks
    * @param account Provide an address to get the blocks
@@ -41,6 +46,16 @@ interface INepPool {
    * @dev Returns the total tokens locked in the pool
    */
   function getTotalLocked(address token) external view returns (uint256);
+
+  /**
+   * @dev Returns the entry fee of the given token for the given amount
+   */
+  function getEntryFeeFor(address token, uint256 amount) external view returns (uint256);
+
+  /**
+   * @dev Returns the exit fee of the given token for the given amount
+   */
+  function getExitFeeFor(address token, uint256 amount) external view returns (uint256);
 
   /**
    * @dev Returns the total CAKE staked in this farm
