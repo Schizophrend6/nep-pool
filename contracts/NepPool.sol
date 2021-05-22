@@ -269,6 +269,7 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
    * @param amount The amount to deposit to this farm.
    */
   function deposit(address token, uint256 amount) external override whenNotPaused nonReentrant {
+    require(amount > 0, "Invalid amount");
     require(this.getRemainingToStake(token) >= amount, "Sorry, that exceeds target");
 
     address you = super._msgSender();
@@ -287,7 +288,10 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
     _pool[token].totalLocked = _pool[token].totalLocked.add(stake);
     _depositHeights[token][you] = block.number;
 
-    IERC20(token).safeTransfer(_treasury, entryFee);
+    if (entryFee > 0) {
+      IERC20(token).safeTransfer(_treasury, entryFee);
+    }
+
     emit Deposit(token, you, amount);
   }
 
@@ -299,6 +303,8 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
    * @param amount Amount to withdraw.
    */
   function withdraw(address token, uint256 amount) external override whenNotPaused nonReentrant {
+    require(amount > 0, "Invalid amount");
+
     address you = super._msgSender();
     uint256 balance = _tokenBalances[token][you];
 
@@ -316,8 +322,13 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
     uint256 exitFee = this.getExitFeeFor(token, amount);
     uint256 stake = amount.sub(exitFee);
 
-    IERC20(token).safeTransfer(you, stake);
-    IERC20(token).safeTransfer(_treasury, exitFee);
+    if (stake > 0) {
+      IERC20(token).safeTransfer(you, stake);
+    }
+
+    if (exitFee > 0) {
+      IERC20(token).safeTransfer(_treasury, exitFee);
+    }
 
     emit Withdrawn(token, you, amount);
   }
@@ -327,5 +338,13 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
    */
   function withdrawRewards(address token) external override whenNotPaused nonReentrant {
     _withdrawRewards(token, super._msgSender());
+  }
+
+  function pause() external onlyOwner {
+    super._pause();
+  }
+
+  function unpause() external onlyOwner {
+    super._unpause();
   }
 }
