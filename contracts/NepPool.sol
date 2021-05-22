@@ -340,11 +340,11 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
     _withdrawRewards(token, super._msgSender());
   }
 
-  function pause() external onlyOwner {
+  function pause() external onlyOwner whenNotPaused {
     super._pause();
   }
 
-  function unpause() external onlyOwner {
+  function unpause() external onlyOwner whenPaused {
     super._unpause();
   }
 }

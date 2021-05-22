@@ -4,6 +4,9 @@ const BigNumber = require('bignumber.js')
 require('chai').use(require('chai-as-promised')).use(require('chai-bignumber')(BigNumber)).should()
 
 const Pool = artifacts.require('./NepPool')
+const NTransferUtilV1 = artifacts.require('./NTransferUtilV1')
+const MaliciousToken = artifacts.require('./MaliciousToken')
+const NTransferUtilV1Intermediate = artifacts.require('./NTransferUtilV1Intermediate')
 const Destroyable = artifacts.require('./Destroyable')
 const FakeToken = artifacts.require('./Token')
 const { advanceByBlocks } = require('./blocks')
@@ -18,7 +21,68 @@ BigNumber.config({ EXPONENTIAL_AT: 30 })
 
 contract('NEP Pool', function (accounts) {
   const [owner, alice, bob, mallory, treasury] = accounts // eslint-disable-line
-  let nepToken, pool
+  let nepToken, pool, TransferLib
+
+  before(async () => {
+    TransferLib = await NTransferUtilV1.new()
+    await Pool.link('NTransferUtilV1', TransferLib.address)
+    await NTransferUtilV1Intermediate.link('NTransferUtilV1', TransferLib.address)
+  })
+
+  describe('NTransferUtilV1', () => {
+    let intermediate, evil, nonEvil
+
+    beforeEach(async () => {
+      const amount = BigNumber(500 * million * ether)
+      evil = await MaliciousToken.new()
+      nonEvil = await FakeToken.new('Non Evil', 'NEV', amount)
+
+      intermediate = await NTransferUtilV1Intermediate.new()
+      await evil.mint(owner, amount)
+
+      await evil.transfer(intermediate.address, BigNumber(1000 * ether))
+      await nonEvil.transfer(intermediate.address, BigNumber(1000 * ether))
+
+      await evil.transfer(alice, BigNumber(1000 * ether))
+      await nonEvil.transfer(alice, BigNumber(1000 * ether))
+    })
+
+    it('accepts non-malicious transfers', async () => {
+      await intermediate.iTransfer(nonEvil.address, alice, BigNumber(100)).should.not.be.rejected
+    })
+
+    it('rejects transfer to zero address', async () => {
+      await intermediate.iTransfer(nonEvil.address, ZERO_X, BigNumber(1)).should.be.rejectedWith('Invalid recipient')
+    })
+
+    it('rejects zero value transfers', async () => {
+      await intermediate.iTransfer(nonEvil.address, alice, '0').should.be.rejectedWith('Invalid transfer amount')
+    })
+
+    it('rejects malicious transfers', async () => {
+      await intermediate.iTransfer(evil.address, alice, BigNumber(100)).should.be.rejectedWith('Invalid transfer')
+    })
+
+    it('accepts non-malicious approved transfers', async () => {
+      await nonEvil.approve(intermediate.address, BigNumber(100), { from: alice })
+      await intermediate.iTransferFrom(nonEvil.address, alice, bob, BigNumber(100), { from: alice }).should.not.be.rejected
+    })
+
+    it('rejects zero value approved transfers', async () => {
+      await nonEvil.approve(intermediate.address, BigNumber(100), { from: alice })
+      await intermediate.iTransferFrom(nonEvil.address, alice, bob, '0', { from: alice }).should.be.rejectedWith('Invalid transfer amount')
+    })
+
+    it('rejects approved transfers to zero address', async () => {
+      await nonEvil.approve(intermediate.address, BigNumber(100), { from: alice })
+      await intermediate.iTransferFrom(nonEvil.address, alice, ZERO_X, BigNumber(100), { from: alice }).should.be.rejectedWith('Invalid recipient')
+    })
+
+    it('rejects malicious approved transfers', async () => {
+      await evil.approve(intermediate.address, BigNumber(100), { from: alice })
+      await intermediate.iTransferFrom(evil.address, alice, bob, BigNumber(100), { from: alice }).should.be.rejectedWith('Invalid transfer')
+    })
+  })
 
   describe('Deployment', () => {
     before(async () => {
@@ -207,19 +271,28 @@ contract('NEP Pool', function (accounts) {
       }
     })
 
+    it('rejects zero value deposits', async () => {
+      const { token } = farms[0]
+      const amount = BigNumber(0 * ether)
+
+      await token.approve(pool.address, amount)
+      await pool.deposit(token.address, amount).should.be.rejectedWith('Invalid amount')
+    })
+
     it('successfully deposits liquidity tokens to the farm', async () => {
       for (let i = 0; i < farms.length; i++) {
         const { token } = farms[i]
         const amount = BigNumber(10 * ether)
+        const locked = amount.minus(amount.multipliedBy(farms[i].entryFee || '0').dividedBy('1000000'))
 
         await token.approve(pool.address, amount)
         await pool.deposit(token.address, amount)
 
         const staked = await pool.totalStaked(token.address, owner)
-        staked.toString().should.equal(amount.toString())
-
         const totalLocked = await pool.getTotalLocked(token.address)
-        totalLocked.toString().should.equal(amount.toString())
+
+        staked.toString().should.equal(locked.toString())
+        totalLocked.toString().should.equal(locked.toString())
       }
     })
 
@@ -269,7 +342,7 @@ contract('NEP Pool', function (accounts) {
         name: 'WBNB Farm',
         maxStake: BigNumber('2500000000000000000000'),
         entryFee: '25000',
-        exitFee: '0',
+        exitFee: '1000000',
         amount: BigNumber('640000000000000000000000'),
         nepUnitPerTokenUnitPerBlock: BigNumber('24353120243531')
       }]
@@ -282,6 +355,13 @@ contract('NEP Pool', function (accounts) {
         await token.transfer(pool.address, amount)
         await nepToken.balanceOf(pool.address)
       }
+    })
+
+    it('reject zero value withdrawals', async () => {
+      const { token } = farms[0]
+      const amount = BigNumber(0 * ether)
+
+      await pool.withdraw(token.address, amount).should.be.rejectedWith('Invalid amount')
     })
 
     it('successfully withdraws staked liquidity tokens from the farm', async () => {
@@ -300,6 +380,32 @@ contract('NEP Pool', function (accounts) {
 
       staked = await pool.totalStaked(token.address, owner)
       staked.toString().should.equal('0')
+    })
+
+    it('successfully transfers the exit fees to treasury', async () => {
+      const { token } = farms[2]
+      const amount = BigNumber(10 * ether)
+      const locked = amount.minus(amount.multipliedBy(farms[2].entryFee || '0').dividedBy('1000000'))
+      const exitFee = locked.multipliedBy(farms[2].exitFee || '0').dividedBy('1000000')
+
+      await token.approve(pool.address, amount)
+      await pool.deposit(token.address, amount)
+
+      await advanceByBlocks(minStakingPeriodInBlocks)
+
+      let staked = await pool.totalStaked(token.address, owner)
+      staked.toString().should.equal(locked.toString())
+
+      let treasuryBalance = await token.balanceOf(treasury)
+      await pool.withdraw(token.address, locked)
+
+      staked = await pool.totalStaked(token.address, owner)
+      staked.toString().should.equal('0')
+
+      const expectedBalance = BigNumber(treasuryBalance.toString()).plus(exitFee)
+
+      treasuryBalance = await token.balanceOf(treasury)
+      treasuryBalance.toString().should.equal(expectedBalance.toString())
     })
 
     it('rejects request to withdraw amount exceeding balance', async () => {
@@ -442,6 +548,17 @@ contract('NEP Pool', function (accounts) {
     it('returns getInfo without error', async () => {
       const { token } = farm
       await pool.getInfo(token.address).should.not.be.rejected
+    })
+
+    it('allows pausing the contract', async () => {
+      await pool.pause().should.not.be.rejected
+      await pool.pause().should.be.rejected
+    })
+
+    it('allows unpausing the contract', async () => {
+      await pool.unpause().should.be.rejected
+      await pool.pause().should.not.be.rejected
+      await pool.unpause().should.not.be.rejected
     })
   })
 })
