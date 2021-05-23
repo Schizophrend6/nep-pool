@@ -14,7 +14,11 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
   uint256 public override _totalRewardAllocation;
   address public _treasury;
   IERC20 public _nepToken;
+
   uint256 public _totalNepRewarded;
+
+  mapping(address => mapping(address => uint256)) public _myNepRewards; // token --> account --> value
+  mapping(address => uint256) public _totalNepRewardedInFarm;
 
   mapping(address => Liquidity) public _pool; // token -> Liquidity
   mapping(address => mapping(address => uint256)) public _tokenBalances; // token -> account --> value
@@ -165,62 +169,31 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
   }
 
   /**
-   * @dev Gets the summary of the given token farm for the gven account
+   * @dev Gets the summary of the given token farm for the given account
    * @param token The farm token in the pool
    * @param account Account to obtain summary of
-   * @param rewards Your pending reards
-   * @param rewards Your pending reards
-   * @param staked Your liquidity token balance
-   * @param nepPerTokenPerBlock NEP token per liquidity token unit per block
-   * @param totalTokensLocked Total liquidity token locked
-   * @param totalNepLocked Total NEP locked
-   * @param maxToStake Total tokens to be staked
+   * @param values[0] rewards Your pending rewards
+   * @param values[1] staked Your liquidity token balance
+   * @param values[2] nepPerTokenPerBlock NEP token per liquidity token unit per block
+   * @param values[3] totalTokensLocked Total liquidity token locked
+   * @param values[4] totalNepLocked Total NEP locked
+   * @param values[5] maxToStake Total tokens to be staked
+   * @param values[6] myNepRewards Sum of NEP rewareded to the account in this farm
+   * @param values[7] totalNepRewards Sum of all NEP rewarded in this farm
    */
-  function getInfo(address token, address account)
-    external
-    view
-    override
-    returns (
-      uint256 rewards,
-      uint256 staked,
-      uint256 nepPerTokenPerBlock,
-      uint256 totalTokensLocked,
-      uint256 totalNepLocked,
-      uint256 maxToStake
-    )
-  {
-    rewards = this.calculateRewards(token, account); // Your pending reards
-    staked = _tokenBalances[token][account];
-    nepPerTokenPerBlock = _pool[token].nepUnitPerTokenUnitPerBlock; // NEP token per liquidity token unit per block;
-    totalTokensLocked = _pool[token].totalLocked; // Total liquidity token locked;
-    totalNepLocked = _nepToken.balanceOf(address(this));
-    maxToStake = _pool[token].maxStake;
-  }
+  function getInfo(address token, address account) external view override returns (uint256[] memory values) {
+    values = new uint256[](8);
 
-  /**
-   * @dev Gets the summary of the given token farm for the sender
-   * @param token The farm token in the pool
-   * @param rewards Your pending reards
-   * @param staked Your liquidity token balance
-   * @param nepPerTokenPerBlock NEP token per liquidity token unit per block
-   * @param totalTokensLocked Total liquidity token locked
-   * @param totalNepLocked Total NEP locked
-   * @param maxToStake Total tokens to be staked
-   */
-  function getInfo(address token)
-    external
-    view
-    override
-    returns (
-      uint256 rewards,
-      uint256 staked,
-      uint256 nepPerTokenPerBlock,
-      uint256 totalTokensLocked,
-      uint256 totalNepLocked,
-      uint256 maxToStake
-    )
-  {
-    return this.getInfo(token, super._msgSender());
+    values[0] = this.calculateRewards(token, account); // rewards: Your pending reards
+    values[1] = _tokenBalances[token][account]; // staked: Your staked balance on the pool
+    values[2] = _pool[token].nepUnitPerTokenUnitPerBlock; // NEP token per liquidity token unit per block;
+    values[3] = _pool[token].totalLocked; // Total liquidity token locked;
+    values[4] = _nepToken.balanceOf(address(this)); // Total NEP locked
+    values[5] = _pool[token].maxStake; // Max amount to stake
+    values[6] = _myNepRewards[token][account]; // Total NEP rewarded to me in this pool
+    values[7] = _totalNepRewardedInFarm[token]; // Total NEP rewarded to everyone in this pool
+
+    return values;
   }
 
   /**
@@ -245,7 +218,11 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
     }
 
     _pool[token].totalNepRewarded = _pool[token].totalNepRewarded.add(rewards);
-    _totalNepRewarded = _totalNepRewarded.add(rewards);
+
+    _myNepRewards[token][account] = _myNepRewards[token][account].add(rewards); // Rewared to the account in this farm
+    _totalNepRewardedInFarm[token] = _totalNepRewardedInFarm[token].add(rewards); // Rewared to everyone in this farm
+    _totalNepRewarded = _totalNepRewarded.add(rewards); // grand total
+
     _nepToken.safeTransfer(account, rewards);
 
     emit RewardsWithdrawn(token, account, rewards);

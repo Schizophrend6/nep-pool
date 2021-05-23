@@ -547,7 +547,7 @@ contract('NEP Pool', function (accounts) {
 
     it('returns getInfo without error', async () => {
       const { token } = farm
-      await pool.getInfo(token.address).should.not.be.rejected
+      await pool.getInfo(token.address, owner).should.not.be.rejected
     })
 
     it('allows pausing the contract', async () => {
