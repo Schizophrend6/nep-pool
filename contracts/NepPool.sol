@@ -5,13 +5,20 @@ import "openzeppelin-solidity/contracts/security/Pausable.sol";
 import "openzeppelin-solidity/contracts/security/ReentrancyGuard.sol";
 import "./Recoverable.sol";
 import "./INepPool.sol";
+import "./Libraries/NTransferUtilV1.sol";
 
 contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
   using SafeMath for uint256;
+  using NTransferUtilV1 for IERC20;
 
+  uint256 public override _totalRewardAllocation;
   address public _treasury;
   IERC20 public _nepToken;
+
   uint256 public _totalNepRewarded;
+
+  mapping(address => mapping(address => uint256)) public _myNepRewards; // token --> account --> value
+  mapping(address => uint256) public _totalNepRewardedInFarm;
 
   mapping(address => Liquidity) public _pool; // token -> Liquidity
   mapping(address => mapping(address => uint256)) public _tokenBalances; // token -> account --> value
@@ -40,7 +47,8 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
     address you = super._msgSender();
 
     if (amount > 0) {
-      _nepToken.transferFrom(you, address(this), amount);
+      _totalRewardAllocation = _totalRewardAllocation.add(amount);
+      _nepToken.safeTransferFrom(you, address(this), amount);
     }
 
     _pool[token].name = name;
@@ -122,6 +130,20 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
   }
 
   /**
+   * @dev Returns the entry fee of the given token for the given amount
+   */
+  function getEntryFeeFor(address token, uint256 amount) external view override returns (uint256) {
+    return amount.mul(_pool[token].entryFee).div(1000000);
+  }
+
+  /**
+   * @dev Returns the exit fee of the given token for the given amount
+   */
+  function getExitFeeFor(address token, uint256 amount) external view override returns (uint256) {
+    return amount.mul(_pool[token].exitFee).div(1000000);
+  }
+
+  /**
    * @dev Returns the total tokens locked in the pool
    */
   function getTotalLocked(address token) external view override returns (uint256) {
@@ -147,62 +169,31 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
   }
 
   /**
-   * @dev Gets the summary of the given token farm for the gven account
+   * @dev Gets the summary of the given token farm for the given account
    * @param token The farm token in the pool
    * @param account Account to obtain summary of
-   * @param rewards Your pending reards
-   * @param rewards Your pending reards
-   * @param staked Your liquidity token balance
-   * @param nepPerTokenPerBlock NEP token per liquidity token unit per block
-   * @param totalTokensLocked Total liquidity token locked
-   * @param totalNepLocked Total NEP locked
-   * @param maxToStake Total tokens to be staked
+   * @param values[0] rewards Your pending rewards
+   * @param values[1] staked Your liquidity token balance
+   * @param values[2] nepPerTokenPerBlock NEP token per liquidity token unit per block
+   * @param values[3] totalTokensLocked Total liquidity token locked
+   * @param values[4] totalNepLocked Total NEP locked
+   * @param values[5] maxToStake Total tokens to be staked
+   * @param values[6] myNepRewards Sum of NEP rewareded to the account in this farm
+   * @param values[7] totalNepRewards Sum of all NEP rewarded in this farm
    */
-  function getInfo(address token, address account)
-    external
-    view
-    override
-    returns (
-      uint256 rewards,
-      uint256 staked,
-      uint256 nepPerTokenPerBlock,
-      uint256 totalTokensLocked,
-      uint256 totalNepLocked,
-      uint256 maxToStake
-    )
-  {
-    rewards = this.calculateRewards(token, account); // Your pending reards
-    staked = _tokenBalances[token][account];
-    nepPerTokenPerBlock = _pool[token].nepUnitPerTokenUnitPerBlock; // NEP token per liquidity token unit per block;
-    totalTokensLocked = _pool[token].totalLocked; // Total liquidity token locked;
-    totalNepLocked = _nepToken.balanceOf(address(this));
-    maxToStake = _pool[token].maxStake;
-  }
+  function getInfo(address token, address account) external view override returns (uint256[] memory values) {
+    values = new uint256[](8);
 
-  /**
-   * @dev Gets the summary of the given token farm for the sender
-   * @param token The farm token in the pool
-   * @param rewards Your pending reards
-   * @param staked Your liquidity token balance
-   * @param nepPerTokenPerBlock NEP token per liquidity token unit per block
-   * @param totalTokensLocked Total liquidity token locked
-   * @param totalNepLocked Total NEP locked
-   * @param maxToStake Total tokens to be staked
-   */
-  function getInfo(address token)
-    external
-    view
-    override
-    returns (
-      uint256 rewards,
-      uint256 staked,
-      uint256 nepPerTokenPerBlock,
-      uint256 totalTokensLocked,
-      uint256 totalNepLocked,
-      uint256 maxToStake
-    )
-  {
-    return this.getInfo(token, super._msgSender());
+    values[0] = this.calculateRewards(token, account); // rewards: Your pending reards
+    values[1] = _tokenBalances[token][account]; // staked: Your staked balance on the pool
+    values[2] = _pool[token].nepUnitPerTokenUnitPerBlock; // NEP token per liquidity token unit per block;
+    values[3] = _pool[token].totalLocked; // Total liquidity token locked;
+    values[4] = _nepToken.balanceOf(address(this)); // Total NEP locked
+    values[5] = _pool[token].maxStake; // Max amount to stake
+    values[6] = _myNepRewards[token][account]; // Total NEP rewarded to me in this pool
+    values[7] = _totalNepRewardedInFarm[token]; // Total NEP rewarded to everyone in this pool
+
+    return values;
   }
 
   /**
@@ -227,8 +218,12 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
     }
 
     _pool[token].totalNepRewarded = _pool[token].totalNepRewarded.add(rewards);
-    _totalNepRewarded = _totalNepRewarded.add(rewards);
-    _nepToken.transfer(account, rewards);
+
+    _myNepRewards[token][account] = _myNepRewards[token][account].add(rewards); // Rewared to the account in this farm
+    _totalNepRewardedInFarm[token] = _totalNepRewardedInFarm[token].add(rewards); // Rewared to everyone in this farm
+    _totalNepRewarded = _totalNepRewarded.add(rewards); // grand total
+
+    _nepToken.safeTransfer(account, rewards);
 
     emit RewardsWithdrawn(token, account, rewards);
   }
@@ -251,21 +246,28 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
    * @param amount The amount to deposit to this farm.
    */
   function deposit(address token, uint256 amount) external override whenNotPaused nonReentrant {
+    require(amount > 0, "Invalid amount");
     require(this.getRemainingToStake(token) >= amount, "Sorry, that exceeds target");
 
     address you = super._msgSender();
-    IERC20(token).transferFrom(you, address(this), amount);
+    IERC20(token).safeTransferFrom(you, address(this), amount);
 
     // First transfer your pending rewards
     _withdrawRewards(token, you);
 
-    // Credit your ledger
-    _tokenBalances[token][you] = _tokenBalances[token][you].add(amount);
-    _tokenDeposits[token][you] = _tokenDeposits[token][you].add(amount);
+    uint256 entryFee = this.getEntryFeeFor(token, amount);
+    uint256 stake = amount.sub(entryFee);
 
-    // WHAT ABOUT ENTRY FEES?
-    _pool[token].totalLocked = _pool[token].totalLocked.add(amount);
+    // Credit your ledger
+    _tokenBalances[token][you] = _tokenBalances[token][you].add(stake);
+    _tokenDeposits[token][you] = _tokenDeposits[token][you].add(stake);
+
+    _pool[token].totalLocked = _pool[token].totalLocked.add(stake);
     _depositHeights[token][you] = block.number;
+
+    if (entryFee > 0) {
+      IERC20(token).safeTransfer(_treasury, entryFee);
+    }
 
     emit Deposit(token, you, amount);
   }
@@ -278,6 +280,8 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
    * @param amount Amount to withdraw.
    */
   function withdraw(address token, uint256 amount) external override whenNotPaused nonReentrant {
+    require(amount > 0, "Invalid amount");
+
     address you = super._msgSender();
     uint256 balance = _tokenBalances[token][you];
 
@@ -292,10 +296,17 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
     _tokenBalances[token][you] = _tokenBalances[token][you].sub(amount);
     _tokenWithdrawals[token][you] = _tokenWithdrawals[token][you].add(amount);
 
-    // WHAT ABOUT WITHDRAWAL FEES?
+    uint256 exitFee = this.getExitFeeFor(token, amount);
+    uint256 stake = amount.sub(exitFee);
 
-    // Transfer it back to you
-    IERC20(token).transfer(you, amount);
+    if (stake > 0) {
+      IERC20(token).safeTransfer(you, stake);
+    }
+
+    if (exitFee > 0) {
+      IERC20(token).safeTransfer(_treasury, exitFee);
+    }
+
     emit Withdrawn(token, you, amount);
   }
 
@@ -304,5 +315,13 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
    */
   function withdrawRewards(address token) external override whenNotPaused nonReentrant {
     _withdrawRewards(token, super._msgSender());
+  }
+
+  function pause() external onlyOwner whenNotPaused {
+    super._pause();
+  }
+
+  function unpause() external onlyOwner whenPaused {
+    super._unpause();
   }
 }

@@ -8,7 +8,7 @@
   },
   "scripts": {
     "test": "truffle test",
-    "flatten": "truffle-flattener ./contracts/Pool.sol > ./contracts/.Pool.flat.sol",
+    "flatten": "truffle-flattener ./contracts/NepPool.sol > ./contracts/.Pool.flat.sol",
     "coverage": "truffle run coverage"
   },
   "standard": {

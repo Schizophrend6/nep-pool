@@ -19,6 +19,11 @@ interface INepPool {
   event Withdrawn(address indexed token, address indexed account, uint256 amount);
 
   /**
+   * @dev Gets the total number of NEP allocated to be distributed as reward
+   */
+  function _totalRewardAllocation() external view returns (uint256);
+
+  /**
    * @dev Gets the number of blocks since last rewards
    * @param token Provide the token address to get the blocks
    * @param account Provide an address to get the blocks
@@ -43,6 +48,16 @@ interface INepPool {
   function getTotalLocked(address token) external view returns (uint256);
 
   /**
+   * @dev Returns the entry fee of the given token for the given amount
+   */
+  function getEntryFeeFor(address token, uint256 amount) external view returns (uint256);
+
+  /**
+   * @dev Returns the exit fee of the given token for the given amount
+   */
+  function getExitFeeFor(address token, uint256 amount) external view returns (uint256);
+
+  /**
    * @dev Returns the total CAKE staked in this farm
    * @param account Provide account to check
    */
@@ -59,47 +74,16 @@ interface INepPool {
    * @dev Gets the summary of the given token farm for the gven account
    * @param token The farm token in the pool
    * @param account Account to obtain summary of
-   * @param rewards Your pending reards
-   * @param rewards Your pending reards
-   * @param staked Your liquidity token balance
-   * @param nepPerTokenPerBlock NEP token per liquidity token unit per block
-   * @param totalTokensLocked Total liquidity token locked
-   * @param totalNepLocked Total NEP locked
-   * @param maxToStake Total tokens to be staked
+   * @param values[0] rewards Your pending rewards
+   * @param values[1] staked Your liquidity token balance
+   * @param values[2] nepPerTokenPerBlock NEP token per liquidity token unit per block
+   * @param values[3] totalTokensLocked Total liquidity token locked
+   * @param values[4] totalNepLocked Total NEP locked
+   * @param values[5] maxToStake Total tokens to be staked
+   * @param values[6] myNepRewards Sum of NEP rewareded to the account in this farm
+   * @param values[7] totalNepRewards Sum of all NEP rewarded in this farm
    */
-  function getInfo(address token, address account)
-    external
-    view
-    returns (
-      uint256 rewards,
-      uint256 staked,
-      uint256 nepPerTokenPerBlock,
-      uint256 totalTokensLocked,
-      uint256 totalNepLocked,
-      uint256 maxToStake
-    );
-
-  /**
-   * @dev Gets the summary of the given token farm for the sender
-   * @param token The farm token in the pool
-   * @param rewards Your pending reards
-   * @param staked Your liquidity token balance
-   * @param nepPerTokenPerBlock NEP token per liquidity token unit per block
-   * @param totalTokensLocked Total liquidity token locked
-   * @param totalNepLocked Total NEP locked
-   * @param maxToStake Total tokens to be staked
-   */
-  function getInfo(address token)
-    external
-    view
-    returns (
-      uint256 rewards,
-      uint256 staked,
-      uint256 nepPerTokenPerBlock,
-      uint256 totalTokensLocked,
-      uint256 totalNepLocked,
-      uint256 maxToStake
-    );
+  function getInfo(address token, address account) external view returns (uint256[] memory values);
 
   /**
    * @dev Returns the total NEP locked in this farm
