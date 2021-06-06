@@ -1,0 +1,10 @@
+{
+  "exclude_informational": true,
+  "exclude_low": true,
+  "exclude_medium": false,
+  "exclude_high": false,
+  "truffle_ignore_compile": false,
+  "disable_color": false,
+  "legacy_ast": false,
+  "filter_paths": "Fakes|Migrations.sol|openzeppelin"
+}

@@ -24,6 +24,18 @@ interface INepPool {
   function _totalRewardAllocation() external view returns (uint256);
 
   /**
+   * @dev Gets the number of NEP tokens in this farm allocated to be distributed as reward
+   * @param token Provide the token address to get the reward allocation
+   */
+  function _rewardAllocation(address token) external view returns (uint256);
+
+  /**
+   * @dev Gets the remaining number of NEP tokens in this farm to be distributed as reward
+   * @param token Provide the token address to get the remaining rewards
+   */
+  function _remainingNEPRewards(address token) external view returns (uint256);
+
+  /**
    * @dev Gets the number of blocks since last rewards
    * @param token Provide the token address to get the blocks
    * @param account Provide an address to get the blocks
@@ -82,6 +94,7 @@ interface INepPool {
    * @param values[5] maxToStake Total tokens to be staked
    * @param values[6] myNepRewards Sum of NEP rewareded to the account in this farm
    * @param values[7] totalNepRewards Sum of all NEP rewarded in this farm
+   * @param values[8] remainingNEPRewards Remaining NEP in this farm
    */
   function getInfo(address token, address account) external view returns (uint256[] memory values);
 

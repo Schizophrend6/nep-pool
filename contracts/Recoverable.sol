@@ -9,6 +9,8 @@ abstract contract Recoverable is Ownable {
    */
   function recoverEther() external onlyOwner {
     address owner = super.owner();
+
+    // slither-disable-next-line arbitrary-send
     payable(owner).transfer(address(this).balance);
   }
 
@@ -21,6 +23,6 @@ abstract contract Recoverable is Ownable {
     IERC20 bep20 = IERC20(token);
 
     uint256 balance = bep20.balanceOf(address(this));
-    bep20.transfer(owner, balance);
+    require(bep20.transfer(owner, balance), "Transfer failed");
   }
 }
