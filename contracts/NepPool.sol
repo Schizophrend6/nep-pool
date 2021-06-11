@@ -12,6 +12,9 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
   using NTransferUtilV1 for IERC20;
 
   uint256 public override _totalRewardAllocation;
+  mapping(address => uint256) public override _rewardAllocation;
+  mapping(address => uint256) public override _remainingNEPRewards;
+
   address public _treasury;
   IERC20 public _nepToken;
 
@@ -31,57 +34,15 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
   event TreasuryUpdated(address indexed previous, address indexed current);
   event LiquidityUpdated(address indexed token, string name, uint256 maxStake, uint256 nepUnitPerTokenUnitPerBlock, uint256 entryFee, uint256 exitFee, uint256 minStakingPeriodInBlocks);
 
-  function addOrUpdateLiquidity(
-    address token,
-    string memory name,
-    uint256 maxStake,
-    uint256 nepUnitPerTokenUnitPerBlock,
-    uint256 entryFee, // Percentage value: upto 4 decimal places, x10000
-    uint256 exitFee, // Percentage value: upto 4 decimal places, x10000
-    uint256 minStakingPeriodInBlocks,
-    uint256 amount
-  ) external onlyOwner {
-    require(token != address(0), "Invalid token");
-    require(maxStake > 0, "Invalid maximum stake amount");
-
-    address you = super._msgSender();
-
-    if (amount > 0) {
-      _totalRewardAllocation = _totalRewardAllocation.add(amount);
-      _nepToken.safeTransferFrom(you, address(this), amount);
-    }
-
-    _pool[token].name = name;
-    _pool[token].maxStake = maxStake;
-    _pool[token].nepUnitPerTokenUnitPerBlock = nepUnitPerTokenUnitPerBlock;
-    _pool[token].entryFee = entryFee;
-    _pool[token].exitFee = exitFee;
-    _pool[token].minStakingPeriodInBlocks = minStakingPeriodInBlocks;
-
-    emit LiquidityUpdated(token, name, maxStake, nepUnitPerTokenUnitPerBlock, entryFee, exitFee, minStakingPeriodInBlocks);
-  }
-
   /**
    * @dev NEP Farm Pool
    * @param nepToken NEP token address
    * @param treasury Treasury account address
    */
-  constructor(address nepToken, address treasury) payable {
+  constructor(address nepToken, address treasury) {
     _nepToken = IERC20(nepToken);
     _treasury = treasury;
     emit TreasuryUpdated(address(0), treasury);
-  }
-
-  /**
-   * @dev Updates the treasury address
-   * @param treasury New treasury address
-   */
-  function updateTreasury(address treasury) external onlyOwner {
-    require(treasury != address(0), "Invalid address");
-    require(treasury != _treasury, "Provide a new address");
-
-    emit TreasuryUpdated(_treasury, treasury);
-    _treasury = treasury;
   }
 
   /**
@@ -178,11 +139,13 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
    * @param values[3] totalTokensLocked Total liquidity token locked
    * @param values[4] totalNepLocked Total NEP locked
    * @param values[5] maxToStake Total tokens to be staked
-   * @param values[6] myNepRewards Sum of NEP rewareded to the account in this farm
+   * @param values[6] myNepRewards Sum of NEP rewarded to the account in this farm
    * @param values[7] totalNepRewards Sum of all NEP rewarded in this farm
+   * @param values[8] rewardAllocation NEP reward allocation for this farm
+   * @param values[9] remainingNEPRewards Remaining NEP in this farm
    */
   function getInfo(address token, address account) external view override returns (uint256[] memory values) {
-    values = new uint256[](8);
+    values = new uint256[](10);
 
     values[0] = this.calculateRewards(token, account); // rewards: Your pending reards
     values[1] = _tokenBalances[token][account]; // staked: Your staked balance on the pool
@@ -192,6 +155,8 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
     values[5] = _pool[token].maxStake; // Max amount to stake
     values[6] = _myNepRewards[token][account]; // Total NEP rewarded to me in this pool
     values[7] = _totalNepRewardedInFarm[token]; // Total NEP rewarded to everyone in this pool
+    values[8] = _rewardAllocation[token];
+    values[9] = _remainingNEPRewards[token];
 
     return values;
   }
@@ -219,22 +184,14 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
 
     _pool[token].totalNepRewarded = _pool[token].totalNepRewarded.add(rewards);
 
-    _myNepRewards[token][account] = _myNepRewards[token][account].add(rewards); // Rewared to the account in this farm
-    _totalNepRewardedInFarm[token] = _totalNepRewardedInFarm[token].add(rewards); // Rewared to everyone in this farm
+    _myNepRewards[token][account] = _myNepRewards[token][account].add(rewards); // Rewarded to the account in this farm
+    _totalNepRewardedInFarm[token] = _totalNepRewardedInFarm[token].add(rewards); // Rewarded to everyone in this farm
     _totalNepRewarded = _totalNepRewarded.add(rewards); // grand total
 
+    _remainingNEPRewards[token] = _remainingNEPRewards[token].sub(rewards);
     _nepToken.safeTransfer(account, rewards);
 
     emit RewardsWithdrawn(token, account, rewards);
-  }
-
-  /**
-   * @dev Sets minimum staking period
-   * @param value Provide value as number of blocks to wait for
-   */
-  function setMinStakingPeriodInBlocks(address token, uint256 value) external onlyOwner {
-    emit MinStakingPeriodUpdated(token, _pool[token].minStakingPeriodInBlocks, value);
-    _pool[token].minStakingPeriodInBlocks = value;
   }
 
   /**
@@ -250,9 +207,9 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
     require(this.getRemainingToStake(token) >= amount, "Sorry, that exceeds target");
 
     address you = super._msgSender();
-    IERC20(token).safeTransferFrom(you, address(this), amount);
 
     // First transfer your pending rewards
+    // slither-disable-next-line reentrancy-eth
     _withdrawRewards(token, you);
 
     uint256 entryFee = this.getEntryFeeFor(token, amount);
@@ -261,9 +218,10 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
     // Credit your ledger
     _tokenBalances[token][you] = _tokenBalances[token][you].add(stake);
     _tokenDeposits[token][you] = _tokenDeposits[token][you].add(stake);
-
     _pool[token].totalLocked = _pool[token].totalLocked.add(stake);
     _depositHeights[token][you] = block.number;
+
+    IERC20(token).safeTransferFrom(you, address(this), amount);
 
     if (entryFee > 0) {
       IERC20(token).safeTransfer(_treasury, entryFee);
@@ -288,6 +246,8 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
     require(balance >= amount, "Try again later");
     require(block.number > _depositHeights[token][you].add(_pool[token].minStakingPeriodInBlocks), "Withdrawal too early");
 
+    // First transfer your pending rewards
+    // slither-disable-next-line reentrancy-eth
     _withdrawRewards(token, you);
 
     _pool[token].totalLocked = _pool[token].totalLocked.sub(amount);
@@ -315,6 +275,59 @@ contract NepPool is INepPool, Recoverable, Pausable, ReentrancyGuard {
    */
   function withdrawRewards(address token) external override whenNotPaused nonReentrant {
     _withdrawRewards(token, super._msgSender());
+  }
+
+  function addOrUpdateLiquidity(
+    address token,
+    string memory name,
+    uint256 maxStake,
+    uint256 nepUnitPerTokenUnitPerBlock,
+    uint256 entryFee, // Percentage value: upto 4 decimal places, x10000
+    uint256 exitFee, // Percentage value: upto 4 decimal places, x10000
+    uint256 minStakingPeriodInBlocks,
+    uint256 amount
+  ) external onlyOwner {
+    require(token != address(0), "Invalid token");
+    require(maxStake > 0, "Invalid maximum stake amount");
+
+    address you = super._msgSender();
+
+    if (amount > 0) {
+      _totalRewardAllocation = _totalRewardAllocation.add(amount);
+      _rewardAllocation[token] = _rewardAllocation[token].add(amount);
+      _remainingNEPRewards[token] = _remainingNEPRewards[token].add(amount);
+      _nepToken.safeTransferFrom(you, address(this), amount);
+    }
+
+    _pool[token].name = name;
+    _pool[token].maxStake = maxStake;
+    _pool[token].nepUnitPerTokenUnitPerBlock = nepUnitPerTokenUnitPerBlock;
+    _pool[token].entryFee = entryFee;
+    _pool[token].exitFee = exitFee;
+    _pool[token].minStakingPeriodInBlocks = minStakingPeriodInBlocks;
+
+    emit LiquidityUpdated(token, name, maxStake, nepUnitPerTokenUnitPerBlock, entryFee, exitFee, minStakingPeriodInBlocks);
+  }
+
+  /**
+   * @dev Updates the treasury address
+   * @param treasury New treasury address
+   */
+  function updateTreasury(address treasury) external onlyOwner {
+    require(treasury != address(0), "Invalid address");
+    require(treasury != _treasury, "Provide a new address");
+
+    emit TreasuryUpdated(_treasury, treasury);
+    _treasury = treasury;
+  }
+
+  /**
+   * @dev Sets minimum staking period
+   * @param value Provide value as number of blocks to wait for
+   */
+  function setMinStakingPeriodInBlocks(address token, uint256 value) external onlyOwner {
+    emit MinStakingPeriodUpdated(token, _pool[token].minStakingPeriodInBlocks, value);
+    _pool[token].minStakingPeriodInBlocks = value;
   }
 
   function pause() external onlyOwner whenNotPaused {
